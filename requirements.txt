@@ -1,0 +1,14 @@
+grpcio
+grpcio-tools
+black
+sqlalchemy[asyncio]
+asyncpg
+alembic
+yookassa
+redis
+pydantic
+psycopg2-binary
+fastapi
+uvicorn
+orjson
+mypy

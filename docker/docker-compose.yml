@@ -1,0 +1,20 @@
+services:
+  monkey-island-payment:
+    restart: unless-stopped
+    network_mode: host # на MacOS/Windows это не работает, нужно добавить ports секцию
+    image: monkey-island-payment:v0.1
+    env_file:
+      - .env
+    privileged: true
+    volumes:
+      - log:/app/log
+      - webhooks:/app/webhooks
+      - rwms-tasks:/app/rwms-tasks
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+volumes:
+  log:
+  webhooks:
+  rwms-tasks:
