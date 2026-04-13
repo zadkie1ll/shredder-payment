@@ -287,58 +287,6 @@ async def handle_succeeded_payment(
                     bonus_days_count=30,
                 )
 
-                is_disabled = await is_user_allow_autopay_disabled(
-                    metadata.username, session
-                )
-
-                # Выглядит странно, так как платеж пришел, но мы не продлеваем подписку?
-                # Надо вспомнить почему так было сделано
-                # ВЫВОД: Это серьезная ошибка в коде, всегда сперва надо шедулить продление подписки
-                # и только потом решать, включать ли автоплатеж пользователю
-                #
-                # Но вообще при оплате этот флаг должен выставляться всегда в true.
-                # Но если webhook будет долго доставляться, то возможно пользователь мог
-                # отключить автоплатеж и когда эвент придет сюда, подписка не продлится.
-                if is_disabled:
-                    return True
-
-                # Аналогично странно
-                if not payment.payment_method.saved:
-                    return True
-
-                query = text("""
-                    WITH user_data AS (
-                        SELECT id FROM users WHERE username = :username LIMIT 1
-                    )
-                    INSERT INTO yk_recurrent_payments (
-                        recurrent_payment_id,
-                        user_id,
-                        amount,
-                        currency,
-                        captured_at,
-                        subscription_period,
-                        is_trial_promotion,
-                        scheduled_payment
-                    )
-                    SELECT
-                        :recurrent_payment_id,
-                        (SELECT id FROM user_data),
-                        :amount,
-                        :currency,
-                        :captured_at,
-                        :subscription_period,
-                        :is_trial_promotion,
-                        :scheduled_payment
-                    ON CONFLICT (user_id) DO UPDATE SET
-                        recurrent_payment_id = EXCLUDED.recurrent_payment_id,
-                        amount = EXCLUDED.amount,
-                        currency = EXCLUDED.currency,
-                        captured_at = EXCLUDED.captured_at,
-                        subscription_period = EXCLUDED.subscription_period,
-                        is_trial_promotion = EXCLUDED.is_trial_promotion,
-                        scheduled_payment = false
-                    """)
-
                 next_autopay_price = payment.amount.value
                 next_autopay_period_to_extend = metadata.subscription_period
                 tariff = str_to_tariff(metadata.subscription_period)
@@ -352,19 +300,67 @@ async def handle_succeeded_payment(
                     payment.captured_at.replace("Z", "+00:00")
                 ).replace(tzinfo=None)
 
-                await session.execute(
-                    query,
-                    {
-                        "recurrent_payment_id": payment.payment_method.id,
-                        "username": metadata.username,
-                        "amount": next_autopay_price,
-                        "currency": payment.amount.currency,
-                        "captured_at": captured_at,
-                        "subscription_period": next_autopay_period_to_extend,
-                        "is_trial_promotion": metadata.trial_promotion,
-                        "scheduled_payment": False,
-                    },
+                is_disabled = await is_user_allow_autopay_disabled(
+                    metadata.username, session
                 )
+
+                if is_disabled:
+                    logging.info(
+                        f"autopay disabled for user {metadata.username}, "
+                        f"skipping recurrent payment update for {payment.id}"
+                    )
+                elif not payment.payment_method.saved:
+                    logging.info(
+                        f"payment method was not saved for payment {payment.id}, "
+                        f"skipping recurrent payment update"
+                    )
+                else:
+                    query = text("""
+                        WITH user_data AS (
+                            SELECT id FROM users WHERE username = :username LIMIT 1
+                        )
+                        INSERT INTO yk_recurrent_payments (
+                            recurrent_payment_id,
+                            user_id,
+                            amount,
+                            currency,
+                            captured_at,
+                            subscription_period,
+                            is_trial_promotion,
+                            scheduled_payment
+                        )
+                        SELECT
+                            :recurrent_payment_id,
+                            (SELECT id FROM user_data),
+                            :amount,
+                            :currency,
+                            :captured_at,
+                            :subscription_period,
+                            :is_trial_promotion,
+                            :scheduled_payment
+                        ON CONFLICT (user_id) DO UPDATE SET
+                            recurrent_payment_id = EXCLUDED.recurrent_payment_id,
+                            amount = EXCLUDED.amount,
+                            currency = EXCLUDED.currency,
+                            captured_at = EXCLUDED.captured_at,
+                            subscription_period = EXCLUDED.subscription_period,
+                            is_trial_promotion = EXCLUDED.is_trial_promotion,
+                            scheduled_payment = false
+                        """)
+
+                    await session.execute(
+                        query,
+                        {
+                            "recurrent_payment_id": payment.payment_method.id,
+                            "username": metadata.username,
+                            "amount": next_autopay_price,
+                            "currency": payment.amount.currency,
+                            "captured_at": captured_at,
+                            "subscription_period": next_autopay_period_to_extend,
+                            "is_trial_promotion": metadata.trial_promotion,
+                            "scheduled_payment": False,
+                        },
+                    )
 
                 extend_expire_at_query = text("""
                     UPDATE users 
