@@ -2,11 +2,18 @@ from typing import Optional
 from datetime import datetime
 from datetime import timezone
 from datetime import timedelta
+from google.protobuf.timestamp_pb2 import Timestamp
 from common.rwms_client import RwmsClient
 from common.models.tariff import Tariff
 import proto.rwmanager_pb2 as proto
 
 from config import Config
+
+
+def datetime_to_timestamp(value: datetime) -> Timestamp:
+    timestamp = Timestamp()
+    timestamp.FromDatetime(value)
+    return timestamp
 
 
 async def create_user(
@@ -22,7 +29,9 @@ async def create_user(
             username=username,
             telegram_id=telegram_id,
             email=email,
-            expire_at=datetime.now(timezone.utc) + tariff.subscription_period,
+            expire_at=datetime_to_timestamp(
+                datetime.now(timezone.utc) + tariff.subscription_period
+            ),
             activate_all_inbounds=True,
             status=proto.UserStatus.ACTIVE,
             traffic_limit_strategy=proto.TrafficLimitStrategy.NO_RESET,
@@ -54,7 +63,7 @@ async def update_user(
     update_user_response = await rwms_client.update_user(
         proto.UpdateUserRequest(
             uuid=user.uuid,
-            expire_at=new_expire_at,
+            expire_at=datetime_to_timestamp(new_expire_at),
             status=proto.UserStatus.ACTIVE,
             traffic_limit_strategy=proto.TrafficLimitStrategy.NO_RESET,
             active_internal_squads=[config.internal_all_nodes_squad_uuid],

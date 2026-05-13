@@ -125,6 +125,7 @@ class RwmsTasksProcessor:
                         )
 
                         user_response = None
+                        subscription_activated = False
 
                         if user is None:
                             user_response = await create_user(
@@ -156,6 +157,9 @@ class RwmsTasksProcessor:
                             await self.__save_subscription_reactivated(task.username)
 
                 except Exception as e:
-                    logging.error(f"executing rwms task {file.name} failed: {e}")
+                    logging.error(
+                        f"executing rwms task {file.name} failed: {e}",
+                        exc_info=True,
+                    )
 
             await asyncio.sleep(PROCESS_RWMS_TASK_PAUSE)

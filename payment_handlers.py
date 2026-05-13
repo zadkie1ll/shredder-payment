@@ -3,6 +3,7 @@ import logging
 from typing import Optional
 from datetime import datetime
 from datetime import timedelta
+from decimal import Decimal
 from sqlalchemy import insert
 from sqlalchemy import exists
 from sqlalchemy import text
@@ -44,6 +45,15 @@ from send_notification import send_failed_autopay
 from send_notification import send_failed_non_autopay
 from send_purchase import send_purchase
 from save_event_log import save_event_log
+
+
+def payment_amount_to_int(value: str) -> int:
+    amount = Decimal(value)
+
+    if amount != amount.to_integral_value():
+        raise ValueError(f"payment amount must be an integer, got {value!r}")
+
+    return int(amount)
 
 
 async def has_payment(payment_id: str, session: AsyncSession) -> bool:
@@ -111,7 +121,7 @@ async def save_payment_if_not_exists(
             insert(YkPayment).values(
                 is_trial_promotion=metadata.trial_promotion,
                 user_id=user_id,
-                amount=payment.amount.value,
+                amount=payment_amount_to_int(payment.amount.value),
                 currency=payment.amount.currency,
                 status=payment.status,
                 captured_at=captured_at,
@@ -223,16 +233,28 @@ async def add_referrer_bonus_if_needed(
             referrer_username, referrer_telegram_id = referrer_info
             bonus_days_interval = timedelta(days=bonus_days_count)
 
-            await extend_user_subscription_by_username(
-                session, referrer_username, bonus_days_interval
-            )
             user = await rwms_client.get_user_by_username(referrer_username)
+            if user is None:
+                logging.warning(
+                    f"referrer subscription not found in RWMS for {referrer_username}"
+                )
+                return
 
             user_response, subscription_activated = await update_user(
                 rwms_client=rwms_client,
                 config=config,
                 user=user,
                 interval=bonus_days_interval,
+            )
+
+            if user_response is None:
+                logging.error(
+                    f"failed to apply referral bonus for referrer {referrer_username} and referral {metadata.username}"
+                )
+                return
+
+            await extend_user_subscription_by_username(
+                session, referrer_username, bonus_days_interval
             )
 
             bonus = ReferralBonus(
@@ -243,14 +265,9 @@ async def add_referrer_bonus_if_needed(
             )
             session.add(bonus)
 
-            if user_response is not None:
-                logging.info(
-                    f"referral bonus for referrer {referrer_username} and referral {metadata.username} applied successfully"
-                )
-            else:
-                logging.error(
-                    f"failed to apply referral bonus for referrer {referrer_username} and referral {metadata.username}"
-                )
+            logging.info(
+                f"referral bonus for referrer {referrer_username} and referral {metadata.username} applied successfully"
+            )
 
             if subscription_activated:
                 await save_subscription_reactivated(session, referrer_username)
@@ -287,7 +304,7 @@ async def handle_succeeded_payment(
                     bonus_days_count=30,
                 )
 
-                next_autopay_price = payment.amount.value
+                next_autopay_price = payment_amount_to_int(payment.amount.value)
                 next_autopay_period_to_extend = metadata.subscription_period
                 tariff = str_to_tariff(metadata.subscription_period)
 
@@ -420,7 +437,7 @@ async def handle_succeeded_payment(
 
                 return True
     except Exception as e:
-        logging.error(f"handling succeeded payment error: {e}")
+        logging.error(f"handling succeeded payment error: {e}", exc_info=True)
         return False
 
 
@@ -491,5 +508,5 @@ async def handle_canceled_payment(
 
                 return True
     except Exception as e:
-        logging.error(f"handling canceled payment error: {e}")
+        logging.error(f"handling canceled payment error: {e}", exc_info=True)
         return False
